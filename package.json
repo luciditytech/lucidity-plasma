@@ -1,0 +1,26 @@
+{
+  "name": "plasma",
+  "version": "1.0.0",
+  "description": "",
+  "main": "truffle-config.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "./node_modules/.bin/mocha --reporter spec"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bignumber.js": "^6.0.0",
+    "chai": "^4.1.2",
+    "ethereumjs-util": "^5.1.5",
+    "keccak": "^1.4.0",
+    "mocha": "^5.0.1",
+    "rlp": "^2.0.0",
+    "web3": "^1.0.0-beta.30",
+    "web3-utils": "^1.0.0-beta.30",
+    "zeppelin-solidity": "1.6.0"
+  }
+}

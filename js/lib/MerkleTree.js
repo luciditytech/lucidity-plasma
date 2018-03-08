@@ -53,6 +53,10 @@ class MerkleTree {
     return bufferToHex(this.getRoot());
   }
 
+  getProofByElem (el) {
+      return this.getProof(sha3(el))
+  }
+
   getProof (el) {
     let idx = this.bufIndexOf(el, this.elements);
 
@@ -72,6 +76,8 @@ class MerkleTree {
       return proof;
     }, []);
   }
+
+
 
   getHexProof (el) {
     const proof = this.getProof(el);

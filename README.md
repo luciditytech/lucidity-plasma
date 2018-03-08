@@ -1,5 +1,29 @@
 # Lucidity Plasma
 
+Implements a Solidity contract to manage Plasma side-chain on Ethereum.
+
+## Install dependencies with
+
+```
+$ npm install
+```
+
+## Run test cases:
+
+```
+# start ganache CLI
+$ ./ganache-cli
+
+$ truffle test
+```
+
+## TODO
+
+- Implement a way to challenge withdrawals;
+- Implement consensus between operators;
+- Optimize the code in order to spend less gas;
+- Implement a better serialization mechanism.
+
 ## Licensed under MIT.
 
 This code is licensed under MIT.

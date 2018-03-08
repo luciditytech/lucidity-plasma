@@ -1,36 +1,12 @@
 const web3Utils = require('web3-utils');
-const ethjsUtil = require('ethereumjs-util')
+const ethjsUtil = require('ethereumjs-util');
+
+const Signature = require('./Signature');
 
 const RLP = require('rlp');
 
-class Signature {
-    constructor(v, r, s) {
-        Object.defineProperty(this, 'v', {
-            value: v,
-            writable: false
-        });
-        Object.defineProperty(this, 'r', {
-            value: r,//toPaddedHexString(r, 32),
-            writable: false
-        });
-        Object.defineProperty(this, 's', {
-            value: s,//toPaddedHexString(s, 32),
-            writable: false
-        });
-    }
-
-    static none() {
-        return new Signature("0x0", "0x0", "0x0");
-    }
-
-    static fromHex(hex) {
-        let vrs = ethjsUtil.fromRpcSig(hex);
-        return new Signature(vrs.v, "0x" + vrs.r.toString('hex'), "0x" + vrs.s.toString('hex'));
-    }
-}
-
 class TransactionInput {
-    constructor(txID, outputIndex) {
+    constructor(txID, outputIndex, signature) {
         Object.defineProperty(this, 'txID', {
             value: toPaddedHexString(txID, 32),
             writable: false
@@ -39,16 +15,29 @@ class TransactionInput {
             value: outputIndex,
             writable: false
         });
+        Object.defineProperty(this, 'signature', {
+            value: signature,
+            writable: false
+        });
     }
 
-    typeVals() {
+    typeVals(includeSignatures) {
         return [{
             type: 'bytes32',
             value: this.txID
         }, {
             type: 'uint',
             value: this.outputIndex
-        }];
+        }].concat(includeSignatures ? [{
+            type: 'uint8',
+            value: this.signature.v
+        }, {
+            type: 'bytes32',
+            value: this.signature.r
+        }, {
+            type: 'bytes32',
+            value: this.signature.s
+        }] : []);
     }
 
     static none() {
@@ -56,10 +45,9 @@ class TransactionInput {
     }
 
     equals(obj) {
-        return JSON.stringify(this.typeVals()) === JSON.stringify(obj.typeVals());
+        return JSON.stringify(this.typeVals(true)) === JSON.stringify(obj.typeVals(true));
     }
 }
-
 
 class TransactionOutput {
     constructor(address, amount) {
@@ -94,8 +82,7 @@ class TransactionOutput {
 
 class Transaction {
     constructor(inputs, outputs, payload) {
-        if (inputs.length !== 2) throw "Must be 2 inputs";
-        if (outputs.length !== 2) throw "Must be 2 outputs";
+        if ((inputs.length + outputs.length) === 0) throw "Must be an input or an output";
 
         Object.defineProperty(this, 'inputs', {
             value: inputs,
@@ -113,14 +100,13 @@ class Transaction {
 
     static depositTransaction(address, amount, headerIndex) {
         const payeeOutput = new TransactionOutput(address, amount);
-
-        return new Transaction([TransactionInput.none(), TransactionInput.none()], [payeeOutput, TransactionOutput.none()], headerIndex);
+        return new Transaction([], [payeeOutput], headerIndex);
     }
 
     toRLP() {
         const res = [[], [], this.payload];
         this.inputs.forEach((input) => {
-            res[0].push([input.txID, input.outputIndex]);
+            res[0].push([input.txID, input.outputIndex, input.signature.v, input.signature.r, input.signature.s]);
         });
         this.outputs.forEach((output) => {
             res[1].push([output.address, output.amount]);
@@ -140,9 +126,17 @@ class Transaction {
         return '0x' + this.hash().toString('hex')
     }
 
-    typeVals() {
+    tid() {
+        return Buffer.from(web3Utils.soliditySha3.apply(null, this.typeVals(true)).substring(2), 'hex');
+    }
+
+    tidHex() {
+        return '0x' + this.tid().toString('hex')
+    }
+
+    typeVals(includeSignatures) {
         let res = [];
-        this.inputs.forEach(input => res = res.concat(input.typeVals()));
+        this.inputs.forEach(input => res = res.concat(input.typeVals(includeSignatures)));
         this.outputs.forEach(output => res = res.concat(output.typeVals()));
         res.push({
             type: 'uint',
@@ -152,12 +146,9 @@ class Transaction {
     }
 
     isDeposit() {
-        return this.inputs.length === 2
-            && this.outputs.length === 2
-            && this.inputs[0].equals(TransactionInput.none())
-            && this.inputs[1].equals(TransactionInput.none())
+        return this.inputs.length === 0
+            && this.outputs.length === 1
             && this.outputs[0].amount > 0
-            && this.outputs[1].equals(TransactionOutput.none());
     }
 
     verify(signature, address) {
@@ -181,5 +172,4 @@ module.exports = {
     Transaction: Transaction,
     TransactionOutput: TransactionOutput,
     TransactionInput: TransactionInput,
-    Signature: Signature
 };

@@ -1,11 +1,11 @@
-
 const ethjsUtil = require('ethereumjs-util');
 const secp256k1 = require('secp256k1');
 const crypto = require('crypto');
 
 const Header = require('../js/lib/Header');
 const MerkleTree = require('../js/lib/merkleTree');
-const { Transaction, TransactionInput, TransactionOutput, Signature } = require('../js/lib/Transaction');
+const { Transaction, TransactionInput, TransactionOutput } = require('../js/lib/Transaction');
+const Signature = require('../js/lib/Signature');
 const UTXO = require('../js/lib/UTXO');
 
 const Plasma = artifacts.require("./Plasma.sol");
@@ -36,7 +36,6 @@ contract('Plasma', async ([owner]) => {
     });
 
     it('validate transaction', async function () {
-
         const tx = Transaction.depositTransaction(privToAddr(privGen()), 1000, 500);
 
         assert.isTrue(await plasma.validateTranaction(tx.toRLPHex(), tx.hashHex()));
@@ -101,7 +100,7 @@ contract('Plasma', async ([owner]) => {
         assert.equal(depositEvent.args._amount, 1000);
         assert.equal(depositEvent.args._headerNumber, headers.length);
 
-        const createdAt = (([createdAt]) => {
+        const createdAt = (([version, prev, merkleRootHash, createdAt]) => {
             return parseInt(createdAt.toString());
         })(await plasma.headers(headers.length));
         const prevHash = headers[headers.length - 1].hashHex();
@@ -146,7 +145,7 @@ contract('Plasma', async ([owner]) => {
         assert.equal(depositEvent.args._amount, 500);
         assert.equal(depositEvent.args._headerNumber, headers.length);
 
-        const createdAt = (([createdAt]) => {
+        const createdAt = (([version, prev, merkleRootHash, createdAt]) => {
             return parseInt(createdAt.toString());
         })(await plasma.headers(headers.length));
         const prevHash = headers[headers.length - 1].hashHex();
@@ -185,18 +184,18 @@ contract('Plasma', async ([owner]) => {
     it('move', async function () {
         spendPriv = privGen();
         const payeeOutput1 = new TransactionOutput(privToAddr(spendPriv), 1000);
-        const tx1 = spendTransaction1 = new Transaction([new TransactionInput(depositTransaction1.hashHex(), 0), TransactionInput.none()],
-            [payeeOutput1, TransactionOutput.none()]);
+        const tx1 = spendTransaction1 = txWithSignatures([new TransactionInput(depositTransaction1.hashHex(), 0)],
+            [payeeOutput1], [depositPriv]);
 
-        const signature1 = sign(tx1.hashHex(), depositPriv);
+        const signature1 = tx1.inputs[0].signature;
 
         assert.isTrue(tx1.verify(signature1, privToAddr(depositPriv)));
         assert.isTrue(await plasma.validate(tx1.hashHex(), privToAddr(depositPriv),
             signature1.v, signature1.r, signature1.s));
 
         const payeeOutput2 = new TransactionOutput(privToAddr(spendPriv), 1500);
-        const tx2 = spendTransaction2 = new Transaction([new TransactionInput(depositTransaction2.hashHex(), 0), TransactionInput.none()],
-            [payeeOutput2, TransactionOutput.none()]);
+        const tx2 = spendTransaction2 = txWithSignatures([new TransactionInput(depositTransaction2.hashHex(), 0)],
+            [payeeOutput2], [depositPriv]);
 
         const signature2 = sign(tx2.hashHex(), depositPriv);
 
@@ -206,7 +205,7 @@ contract('Plasma', async ([owner]) => {
 
         const prevHash = headers[headers.length - 1].hashHex();
 
-        const merkleTree = new MerkleTree([spendTransaction1.hash(), spendTransaction2.hash()]);
+        const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
 
         const header = new Header(0, prevHash, merkleTree.getHexRoot());
 
@@ -220,19 +219,25 @@ contract('Plasma', async ([owner]) => {
     });
 
     it('withdraw', async function () {
+        const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
 
-        const merkleTree = new MerkleTree([spendTransaction1.hash(), spendTransaction2.hash()]);
+        const proof = merkleTree.getHexProof(spendTransaction1.tid());
 
-        const proof = merkleTree.getHexProof(spendTransaction1.hash());
+        const signature = sign(spendTransaction1.tidHex(), spendPriv);
 
-        const signature = sign(spendTransaction1.hashHex(), spendPriv);
-
-        const event = (await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), spendTransaction1.hashHex(), proof,
+        const event = (await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
             signature.v, signature.r, signature.s)).logs.find(x => x.event === 'WithdrawEvent');
 
         assert.equal(event.args._to, privToAddr(spendPriv));
         assert.equal(event.args._amount, 1000);
-        assert.equal(event.args._txID, spendTransaction1.hashHex());
+        assert.equal(event.args._txID, spendTransaction1.tidHex());
+
+        try {
+            await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
+                signature.v, signature.r, signature.s);
+        } catch (err) {
+            assert.isTrue(err.message.includes("VM Exception"));
+        }
     });
 });
 
@@ -252,6 +257,18 @@ function privToAddr(privKey) {
 
 function sign(hex, privKey) {
     const vrs = ethjsUtil.ecsign(new Buffer(hex.substring(2), 'hex'), privKey);
-    //return Signature.fromHex(ethjsUtil.toRpcSig(vrs.v, vrs.r, vrs.s));
     return new Signature(vrs.v, "0x" + vrs.r.toString('hex'), "0x" + vrs.s.toString('hex'));
+}
+
+function txWithSignatures(inputs, outputs, privateKeys) {
+    const noSigTransaction = new Transaction(inputs, outputs);
+
+    const signedInputs = [];
+    inputs.forEach((input, i) => {
+        const signature = sign(noSigTransaction.hashHex(), privateKeys[i]);
+
+        signedInputs.push(new TransactionInput(input.txID, input.outputIndex, signature));
+    });
+
+    return new Transaction(signedInputs, outputs);
 }

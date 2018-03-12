@@ -8,267 +8,267 @@ const { Transaction, TransactionInput, TransactionOutput } = require('../js/lib/
 const Signature = require('../js/lib/Signature');
 const UTXO = require('../js/lib/UTXO');
 
-const Plasma = artifacts.require("./Plasma.sol");
+const Plasma = artifacts.require('./Plasma.sol');
 
 contract('Plasma', async ([owner]) => {
+  const utxo = new UTXO();
 
-    const utxo = new UTXO();
+  it('check balance', async function () {
+    assert.isTrue((await web3.eth.getBalance(owner) > 1.0));
+  });
 
-    it('check balance', async function () {
-        assert.isTrue((await web3.eth.getBalance(owner) > 1.0));
-    });
+  let plasma;
+  it('create contract', async function () {
+    plasma = await Plasma.new(owner);
+  });
 
-    let plasma;
-    it('create contract', async function () {
-        plasma = await Plasma.new(owner)
-    });
+  it('has an owner', async function () {
+    assert.equal(await plasma.owner(), owner);
+  });
 
-    it('has an owner', async function () {
-        assert.equal(await plasma.owner(), owner);
-    });
+  it('set operator', async function () {
+    await plasma.setOperator(owner, true);
+  });
 
-    it('set operator', async function () {
-        await plasma.setOperator(owner, true)
-    });
+  it('is operator', async function () {
+    assert.isTrue(await plasma.isOperator());
+  });
 
-    it('is operator', async function () {
-        assert.isTrue(await plasma.isOperator());
-    });
+  it('validate transaction', async function () {
+    const tx = Transaction.depositTransaction(privToAddr(privGen()), 1000, 500);
 
-    it('validate transaction', async function () {
-        const tx = Transaction.depositTransaction(privToAddr(privGen()), 1000, 500);
+    assert.isTrue(await plasma.validateTranaction(tx.toRLPHex(), tx.hashHex()));
+  });
 
-        assert.isTrue(await plasma.validateTranaction(tx.toRLPHex(), tx.hashHex()));
-    });
+  let headers = [];
 
-    let headers = [];
+  it('create block 1', async function () {
+    const header = new Header(0, '0x0', '0x1');
 
-    it('create block 1', async function () {
-        const header = new Header(0, '0x0', '0x1');
+    const event = (await plasma.submitBlockHeader(headers.length, header.toRLPHex())).logs.find(x =>
+      x.event === 'HeaderSubmittedEvent');
 
-        const event = (await plasma.submitBlockHeader(headers.length, header.toRLPHex())).logs.find(x => x.event === 'HeaderSubmittedEvent');
+    assert.equal(event.args._operator, owner);
+    assert.equal(event.args._headerNumber, 0);
+    assert.equal(event.args._headerHash, header.hashHex());
 
-        assert.equal(event.args._operator, owner);
-        assert.equal(event.args._headerNumber, 0);
-        assert.equal(event.args._headerHash, header.hashHex());
+    headers.push(header);
+  });
 
-        headers.push(header);
-    });
+  it('verify block 1', async function () {
+    (([version, prev, merkleRootHash, createdAt]) => {
+      assert.equal(parseInt(version.toString()), headers[0].version);
+      assert.equal(prev, headers[0].prev);
+      assert.equal(merkleRootHash, headers[0].merkleRootHash);
+      assert.equal(parseInt(createdAt.toString()), headers[0].createdAt);
+    })(await plasma.headers(0));
+  });
 
-    it('verify block 1', async function () {
-        (([version, prev, merkleRootHash, createdAt]) => {
-            assert.equal(parseInt(version.toString()), headers[0].version);
-            assert.equal(prev, headers[0].prev);
-            assert.equal(merkleRootHash, headers[0].merkleRootHash);
-            assert.equal(parseInt(createdAt.toString()), headers[0].createdAt);
-        })(await plasma.headers(0));
-    });
+  it('create block 2', async function () {
+    const header = new Header(0, headers[0].hashHex(), '0x2');
 
-    it('create block 2', async function () {
-        const header = new Header(0, headers[0].hashHex(), '0x2');
+    const event = (await plasma.submitBlockHeader(headers.length, header.toRLPHex())).logs.find(x =>
+      x.event === 'HeaderSubmittedEvent');
 
-        const event = (await plasma.submitBlockHeader(headers.length, header.toRLPHex())).logs.find(x => x.event === 'HeaderSubmittedEvent');
+    assert.equal(event.args._operator, owner);
+    assert.equal(event.args._headerNumber, 1);
+    assert.equal(event.args._headerHash, header.hashHex());
 
-        assert.equal(event.args._operator, owner);
-        assert.equal(event.args._headerNumber, 1);
-        assert.equal(event.args._headerHash, header.hashHex());
+    headers.push(header);
+  });
 
-        headers.push(header);
-    });
+  it('verify block 2', async function () {
+    (([version, prev, merkleRootHash, createdAt]) => {
+      assert.equal(parseInt(version.toString()), headers[1].version);
+      assert.equal(prev, headers[1].prev);
+      assert.equal(merkleRootHash, headers[1].merkleRootHash);
+      assert.equal(parseInt(createdAt.toString()), headers[1].createdAt);
+    })(await plasma.headers(1));
+  });
 
-    it('verify block 2', async function () {
-        (([version, prev, merkleRootHash, createdAt]) => {
-            assert.equal(parseInt(version.toString()), headers[1].version);
-            assert.equal(prev, headers[1].prev);
-            assert.equal(merkleRootHash, headers[1].merkleRootHash);
-            assert.equal(parseInt(createdAt.toString()), headers[1].createdAt);
-        })(await plasma.headers(1));
-    });
+  let depositTransaction1;
+  let depositPriv;
+  it('deposit 1', async function () {
+    depositPriv = privGen();
 
-    let depositTransaction1;
-    let depositPriv;
-    it('deposit 1', async function () {
+    const depositRes = (await plasma.deposit(privToAddr(depositPriv), {
+      value: 1000,
+    }));
 
-        depositPriv = privGen();
+    const depositEvent = depositRes.logs.find(x => x.event === 'DepositEvent');
+    assert.equal(depositEvent.args._from, privToAddr(depositPriv));
+    assert.equal(depositEvent.args._amount, 1000);
+    assert.equal(depositEvent.args._headerNumber, headers.length);
 
-        const depositRes = (await plasma.deposit(privToAddr(depositPriv), {
-            value: 1000,
-        }));
+    const createdAt = (([version, prev, merkleRootHash, createdAt]) =>
+      parseInt(createdAt.toString()))(await plasma.headers(headers.length));
+    const prevHash = headers[headers.length - 1].hashHex();
 
-        const depositEvent = depositRes.logs.find(x => x.event === 'DepositEvent');
-        assert.equal(depositEvent.args._from, privToAddr(depositPriv));
-        assert.equal(depositEvent.args._amount, 1000);
-        assert.equal(depositEvent.args._headerNumber, headers.length);
+    const tx = depositTransaction1 = Transaction.depositTransaction(privToAddr(depositPriv),
+      1000, headers.length);
+    assert.isTrue(tx.isDeposit());
 
-        const createdAt = (([version, prev, merkleRootHash, createdAt]) => {
-            return parseInt(createdAt.toString());
-        })(await plasma.headers(headers.length));
-        const prevHash = headers[headers.length - 1].hashHex();
+    const header = new Header(0, prevHash, tx.hashHex(), createdAt);
 
-        const tx = depositTransaction1 = Transaction.depositTransaction(privToAddr(depositPriv), 1000, headers.length);
-        assert.isTrue(tx.isDeposit());
+    const headerSubmittedEvent = depositRes.logs.find(x => x.event === 'HeaderSubmittedEvent');
+    assert.equal(headerSubmittedEvent.args._operator, owner);
+    assert.equal(headerSubmittedEvent.args._headerNumber, headers.length);
 
-        const header = new Header(0, prevHash, tx.hashHex(), createdAt);
+    (([version, prev, merkleRootHash, createdAt]) => {
+      assert.equal(parseInt(version.toString()), header.version);
+      assert.equal(prev, prevHash);
+      assert.equal(merkleRootHash, tx.hashHex());
+      assert.equal(parseInt(createdAt.toString()), createdAt);
+    })(await plasma.headers(headers.length));
 
-        const headerSubmittedEvent = depositRes.logs.find(x => x.event === 'HeaderSubmittedEvent');
-        assert.equal(headerSubmittedEvent.args._operator, owner);
-        assert.equal(headerSubmittedEvent.args._headerNumber, headers.length);
+    assert.equal(headerSubmittedEvent.args._headerHash, header.hashHex());
 
-        (([version, prev, merkleRootHash, createdAt]) => {
-            assert.equal(parseInt(version.toString()), header.version);
-            assert.equal(prev, prevHash);
-            assert.equal(merkleRootHash, tx.hashHex());
-            assert.equal(parseInt(createdAt.toString()), createdAt);
-        })(await plasma.headers(headers.length));
+    utxo.addTransaction(depositTransaction1);
+    assert.equal(utxo.outputsCount(), 1);
+    assert.equal(utxo.outputsCount(privToAddr(depositPriv)), 1);
+    assert.equal(utxo.addressesCount(), 1);
+    assert.equal(utxo.balance(privToAddr(depositPriv)), 1000);
+    assert.equal(utxo.balance(), 1000);
 
-        assert.equal(headerSubmittedEvent.args._headerHash, header.hashHex());
+    headers.push(header);
+  });
 
-        utxo.addTransaction(depositTransaction1);
-        assert.equal(utxo.outputsCount(), 1);
-        assert.equal(utxo.outputsCount(privToAddr(depositPriv)), 1);
-        assert.equal(utxo.addressesCount(), 1);
-        assert.equal(utxo.balance(privToAddr(depositPriv)), 1000);
-        assert.equal(utxo.balance(), 1000);
+  let depositTransaction2;
+  it('deposit 2', async function () {
+    const depositRes = (await plasma.deposit(privToAddr(depositPriv), {
+      value: 500,
+    }));
 
-        headers.push(header);
-    });
+    const depositEvent = depositRes.logs.find(x => x.event === 'DepositEvent');
+    assert.equal(depositEvent.args._from, privToAddr(depositPriv));
+    assert.equal(depositEvent.args._amount, 500);
+    assert.equal(depositEvent.args._headerNumber, headers.length);
 
-    let depositTransaction2;
-    it('deposit 2', async function () {
+    const createdAt = (([version, prev, merkleRootHash, createdAt]) =>
+      parseInt(createdAt.toString()))(await plasma.headers(headers.length));
+    const prevHash = headers[headers.length - 1].hashHex();
 
-        const depositRes = (await plasma.deposit(privToAddr(depositPriv), {
-            value: 500,
-        }));
+    const tx = depositTransaction2 = Transaction.depositTransaction(
+      privToAddr(depositPriv), 500, headers.length);
+    assert.isTrue(tx.isDeposit());
 
-        const depositEvent = depositRes.logs.find(x => x.event === 'DepositEvent');
-        assert.equal(depositEvent.args._from, privToAddr(depositPriv));
-        assert.equal(depositEvent.args._amount, 500);
-        assert.equal(depositEvent.args._headerNumber, headers.length);
+    const header = new Header(0, prevHash, tx.hashHex(), createdAt);
 
-        const createdAt = (([version, prev, merkleRootHash, createdAt]) => {
-            return parseInt(createdAt.toString());
-        })(await plasma.headers(headers.length));
-        const prevHash = headers[headers.length - 1].hashHex();
+    const headerSubmittedEvent = depositRes.logs.find(x => x.event === 'HeaderSubmittedEvent');
+    assert.equal(headerSubmittedEvent.args._operator, owner);
+    assert.equal(headerSubmittedEvent.args._headerNumber, headers.length);
 
-        const tx = depositTransaction2 = Transaction.depositTransaction(privToAddr(depositPriv), 500, headers.length);
-        assert.isTrue(tx.isDeposit());
+    (([version, prev, merkleRootHash, createdAt]) => {
+      assert.equal(parseInt(version.toString()), header.version);
+      assert.equal(prev, prevHash);
+      assert.equal(merkleRootHash, tx.hashHex());
+      assert.equal(parseInt(createdAt.toString()), createdAt);
+    })(await plasma.headers(headers.length));
 
-        const header = new Header(0, prevHash, tx.hashHex(), createdAt);
+    assert.equal(headerSubmittedEvent.args._headerHash, header.hashHex());
 
-        const headerSubmittedEvent = depositRes.logs.find(x => x.event === 'HeaderSubmittedEvent');
-        assert.equal(headerSubmittedEvent.args._operator, owner);
-        assert.equal(headerSubmittedEvent.args._headerNumber, headers.length);
+    utxo.addTransaction(depositTransaction2);
+    assert.equal(utxo.outputsCount(), 2);
+    assert.equal(utxo.outputsCount(privToAddr(depositPriv)), 2);
+    assert.equal(utxo.addressesCount(), 1);
+    assert.equal(utxo.balance(privToAddr(depositPriv)), 1500);
+    assert.equal(utxo.balance(), 1500);
 
-        (([version, prev, merkleRootHash, createdAt]) => {
-            assert.equal(parseInt(version.toString()), header.version);
-            assert.equal(prev, prevHash);
-            assert.equal(merkleRootHash, tx.hashHex());
-            assert.equal(parseInt(createdAt.toString()), createdAt);
-        })(await plasma.headers(headers.length));
+    headers.push(header);
+  });
 
-        assert.equal(headerSubmittedEvent.args._headerHash, header.hashHex());
+  let spendPriv;
+  let spendTransaction1;
+  let spendTransaction2;
+  it('move', async function () {
+    spendPriv = privGen();
+    const payeeOutput1 = new TransactionOutput(privToAddr(spendPriv), 1000);
+    const tx1 = spendTransaction1 = txWithSignatures(
+      [new TransactionInput(depositTransaction1.hashHex(), 0)], [payeeOutput1], [depositPriv]);
 
-        utxo.addTransaction(depositTransaction2);
-        assert.equal(utxo.outputsCount(), 2);
-        assert.equal(utxo.outputsCount(privToAddr(depositPriv)), 2);
-        assert.equal(utxo.addressesCount(), 1);
-        assert.equal(utxo.balance(privToAddr(depositPriv)), 1500);
-        assert.equal(utxo.balance(), 1500);
+    const signature1 = tx1.inputs[0].signature;
 
-        headers.push(header);
-    });
+    assert.isTrue(tx1.verify(signature1, privToAddr(depositPriv)));
+    assert.isTrue(await plasma.validate(tx1.hashHex(), privToAddr(depositPriv),
+        signature1.v, signature1.r, signature1.s));
 
-    let spendPriv;
-    let spendTransaction1;
-    let spendTransaction2;
-    it('move', async function () {
-        spendPriv = privGen();
-        const payeeOutput1 = new TransactionOutput(privToAddr(spendPriv), 1000);
-        const tx1 = spendTransaction1 = txWithSignatures([new TransactionInput(depositTransaction1.hashHex(), 0)],
-            [payeeOutput1], [depositPriv]);
+    const payeeOutput2 = new TransactionOutput(privToAddr(spendPriv), 1500);
+    const tx2 = spendTransaction2 = txWithSignatures(
+      [new TransactionInput(depositTransaction2.hashHex(), 0)], [payeeOutput2], [depositPriv]);
 
-        const signature1 = tx1.inputs[0].signature;
+    const signature2 = sign(tx2.hashHex(), depositPriv);
 
-        assert.isTrue(tx1.verify(signature1, privToAddr(depositPriv)));
-        assert.isTrue(await plasma.validate(tx1.hashHex(), privToAddr(depositPriv),
-            signature1.v, signature1.r, signature1.s));
+    assert.isTrue(tx2.verify(signature2, privToAddr(depositPriv)));
+    assert.isTrue(await plasma.validate(tx2.hashHex(), privToAddr(depositPriv),
+        signature2.v, signature2.r, signature2.s));
 
-        const payeeOutput2 = new TransactionOutput(privToAddr(spendPriv), 1500);
-        const tx2 = spendTransaction2 = txWithSignatures([new TransactionInput(depositTransaction2.hashHex(), 0)],
-            [payeeOutput2], [depositPriv]);
+    const prevHash = headers[headers.length - 1].hashHex();
 
-        const signature2 = sign(tx2.hashHex(), depositPriv);
+    const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
 
-        assert.isTrue(tx2.verify(signature2, privToAddr(depositPriv)));
-        assert.isTrue(await plasma.validate(tx2.hashHex(), privToAddr(depositPriv),
-            signature2.v, signature2.r, signature2.s));
+    const header = new Header(0, prevHash, merkleTree.getHexRoot());
 
-        const prevHash = headers[headers.length - 1].hashHex();
+    const event = (await plasma.submitBlockHeader(headers.length, header.toRLPHex())).logs.find(x =>
+      x.event === 'HeaderSubmittedEvent');
 
-        const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
+    assert.equal(event.args._operator, owner);
+    assert.equal(event.args._headerNumber, headers.length);
+    assert.equal(event.args._headerHash, header.hashHex());
 
-        const header = new Header(0, prevHash, merkleTree.getHexRoot());
+    headers.push(header);
+  });
 
-        const event = (await plasma.submitBlockHeader(headers.length, header.toRLPHex())).logs.find(x => x.event === 'HeaderSubmittedEvent');
+  it('withdraw', async function () {
+    const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
 
-        assert.equal(event.args._operator, owner);
-        assert.equal(event.args._headerNumber, headers.length);
-        assert.equal(event.args._headerHash, header.hashHex());
+    const proof = merkleTree.getHexProof(spendTransaction1.tid());
 
-        headers.push(header);
-    });
+    const signature = sign(spendTransaction1.tidHex(), spendPriv);
 
-    it('withdraw', async function () {
-        const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
+    const event = (await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
+        signature.v, signature.r, signature.s)).logs.find(x => x.event === 'WithdrawEvent');
 
-        const proof = merkleTree.getHexProof(spendTransaction1.tid());
+    assert.equal(event.args._to, privToAddr(spendPriv));
+    assert.equal(event.args._amount, 1000);
+    assert.equal(event.args._txID, spendTransaction1.tidHex());
 
-        const signature = sign(spendTransaction1.tidHex(), spendPriv);
-
-        const event = (await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
-            signature.v, signature.r, signature.s)).logs.find(x => x.event === 'WithdrawEvent');
-
-        assert.equal(event.args._to, privToAddr(spendPriv));
-        assert.equal(event.args._amount, 1000);
-        assert.equal(event.args._txID, spendTransaction1.tidHex());
-
-        try {
-            await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
-                signature.v, signature.r, signature.s);
-        } catch (err) {
-            assert.isTrue(err.message.includes("VM Exception"));
-        }
-    });
+    try {
+      await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
+            signature.v, signature.r, signature.s);
+    } catch (err) {
+      assert.isTrue(err.message.includes('VM Exception'));
+    }
+  });
 });
 
 function privGen() {
-    const buf = Buffer.alloc(32);
-    let privKey;
-    do {
-        privKey = crypto.randomFillSync(buf);
-    } while (!secp256k1.privateKeyVerify(privKey));
+  const buf = Buffer.alloc(32);
+  let privKey;
+  do {
+    privKey = crypto.randomFillSync(buf);
+  } while (!secp256k1.privateKeyVerify(privKey));
 
-    return privKey;
+  return privKey;
 }
 
 function privToAddr(privKey) {
-    return ethjsUtil.bufferToHex(ethjsUtil.pubToAddress(ethjsUtil.privateToPublic(privKey)));
+  return ethjsUtil.bufferToHex(ethjsUtil.pubToAddress(ethjsUtil.privateToPublic(privKey)));
 }
 
 function sign(hex, privKey) {
-    const vrs = ethjsUtil.ecsign(new Buffer(hex.substring(2), 'hex'), privKey);
-    return new Signature(vrs.v, "0x" + vrs.r.toString('hex'), "0x" + vrs.s.toString('hex'));
+  const { v, r, s } = ethjsUtil.ecsign(new Buffer(hex.substring(2), 'hex'), privKey);
+  return new Signature(v, `0x${r.toString('hex')}`, `0x${s.toString('hex')}`);
 }
 
 function txWithSignatures(inputs, outputs, privateKeys) {
-    const noSigTransaction = new Transaction(inputs, outputs);
+  const noSigTransaction = new Transaction(inputs, outputs);
 
-    const signedInputs = [];
-    inputs.forEach((input, i) => {
-        const signature = sign(noSigTransaction.hashHex(), privateKeys[i]);
+  const signedInputs = [];
+  inputs.forEach((input, i) => {
+    const signature = sign(noSigTransaction.hashHex(), privateKeys[i]);
 
-        signedInputs.push(new TransactionInput(input.txID, input.outputIndex, signature));
-    });
+    signedInputs.push(new TransactionInput(input.txID, input.outputIndex, signature));
+  });
 
-    return new Transaction(signedInputs, outputs);
+  return new Transaction(signedInputs, outputs);
 }

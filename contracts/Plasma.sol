@@ -76,6 +76,11 @@ contract Plasma is Ownable {
     struct TransactionInput {
         bytes32 txID;
         uint outputIndex;
+
+        // signature part
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
     }
 
     struct TransactionOutput {
@@ -84,8 +89,8 @@ contract Plasma is Ownable {
     }
 
     struct Transaction {
-        TransactionInput[2] inputs;
-        TransactionOutput[2] outputs;
+        TransactionInput[] inputs;
+        TransactionOutput[] outputs;
 
         // extra data
         uint payload;
@@ -97,25 +102,11 @@ contract Plasma is Ownable {
     function deposit(address addr) payable external returns (bool success) {
         assert(msg.value > 0);
 
-        TransactionInput memory emptyInput = TransactionInput({
-            txID: 0x0,
-            outputIndex: 0x0
-        });
-
-        TransactionOutput memory emptyOutput = TransactionOutput({
-            recipient: 0x0,
-            amount: 0x0});
-        TransactionOutput memory payeeOutput = TransactionOutput({
+        TransactionInput[] memory inputs = new TransactionInput[](0);
+        TransactionOutput[] memory outputs = new TransactionOutput[](1);
+        outputs[0] = TransactionOutput({
             recipient: addr,
             amount: msg.value});
-
-        TransactionInput[2] memory inputs;
-        inputs[0] = emptyInput;
-        inputs[1] = emptyInput;
-
-        TransactionOutput[2] memory outputs;
-        outputs[0] = payeeOutput;
-        outputs[1] = emptyOutput;
 
         Transaction memory tx = Transaction({
             inputs: inputs,
@@ -144,26 +135,31 @@ contract Plasma is Ownable {
 
     event DepositEvent(address indexed _from, uint indexed _amount, uint indexed _headerNumber);
 
-    function withdraw(uint _headerNumber, bytes _transactionBytes, bytes32 _txHash, bytes _proof,
+    mapping(bytes32 => mapping(uint => bool)) public withdrawTXs;
+
+    function withdraw(uint _headerNumber,
+        bytes _transactionBytes, bytes _proof,
+        uint outputIndex,
         uint8 _v, bytes32 _r, bytes32 _s) public returns (bool success) {
         assert(_headerNumber < headersCount);
         Header storage header = headers[_headerNumber];
 
         // check if the transaction exists
         Transaction memory transaction = decodeTransaction(_transactionBytes);
-        bytes32 txID = hashTransaction(transaction);
+        bytes32 hash = hashTransaction(transaction);
+        bytes32 txID = tid(transaction);
+
+        assert(!withdrawTXs[txID][outputIndex]);
 
         require(MerkleProof.verifyProof(_proof, header.merkleRootHash, txID));
 
-        // should be signed by the receiver
-        address addr = ecrecover(txID, _v, _r, _s);
-        require(transaction.outputs[0].recipient == address(0x0)
-            || transaction.outputs[0].recipient == addr);
-        require(transaction.outputs[1].recipient == address(0x0)
-            || transaction.outputs[1].recipient == addr);
+        assert(transaction.outputs.length == 1);
+        address addr = transaction.outputs[0].recipient;
 
-        uint amount = transaction.outputs[0].amount + transaction.outputs[1].amount;
-        require(amount > 0);
+        require(ecrecover(txID, _v, _r, _s) == addr);
+
+        uint amount = transaction.outputs[0].amount;
+        assert(amount > 0);
 
         addr.transfer(amount);
 
@@ -175,15 +171,37 @@ contract Plasma is Ownable {
     event WithdrawEvent(address indexed _to, uint indexed _amount, bytes32 indexed _txID);
 
     function hashTransaction(Transaction memory _transaction) internal returns (bytes32) {
-        /*bytes memory bversion = toBytes(_header.version);
-        bytes memory bprev = toBytes(_header.prev);
-        bytes memory bmerkleRootHash = toBytes(_header.merkleRootHash);
-        bytes memory bcreatedAt = toBytes(_header.createdAt);*/
-        return keccak256(_transaction.inputs[0].txID, _transaction.inputs[0].outputIndex,
-            _transaction.inputs[1].txID, _transaction.inputs[1].outputIndex,
-            _transaction.outputs[0].recipient, _transaction.outputs[0].amount,
-            _transaction.outputs[1].recipient, _transaction.outputs[1].amount,
-            _transaction.payload);
+        bytes memory res;
+        for (uint i = 0; i < _transaction.inputs.length; ++i) {
+            res = mergeBytes(res, toBytes(_transaction.inputs[i].txID));
+            res = mergeBytes(res, toBytes(_transaction.inputs[i].outputIndex));
+        }
+        for (i = 0; i < _transaction.outputs.length; ++i) {
+            res = mergeBytes(res, toBytes(_transaction.outputs[i].recipient));
+            res = mergeBytes(res, toBytes(_transaction.outputs[i].amount));
+        }
+        res = mergeBytes(res, toBytes(_transaction.payload));
+
+        return keccak256(res);
+    }
+
+    function tid(Transaction memory _transaction) internal returns (bytes32) {
+        bytes memory res;
+        for (uint i = 0; i < _transaction.inputs.length; ++i) {
+            res = mergeBytes(res, toBytes(_transaction.inputs[i].txID));
+            res = mergeBytes(res, toBytes(_transaction.inputs[i].outputIndex));
+
+            res = mergeBytes(res, uint8_toBytes(_transaction.inputs[i].v));
+            res = mergeBytes(res, toBytes(_transaction.inputs[i].r));
+            res = mergeBytes(res, toBytes(_transaction.inputs[i].s));
+        }
+        for (i = 0; i < _transaction.outputs.length; ++i) {
+            res = mergeBytes(res, toBytes(_transaction.outputs[i].recipient));
+            res = mergeBytes(res, toBytes(_transaction.outputs[i].amount));
+        }
+        res = mergeBytes(res, toBytes(_transaction.payload));
+
+        return keccak256(res);
     }
 
     function hashHeader(Header memory _header) internal returns (bytes32) {
@@ -214,37 +232,29 @@ contract Plasma is Ownable {
     function decodeTransaction(bytes memory _transactionBytes) internal returns (Transaction) {
         RLP.RLPItem[] memory item = _transactionBytes.toRLPItem().toList();
 
-        RLP.RLPItem[] memory arr = item[0].toList();
-        RLP.RLPItem[] memory val0 = arr[0].toList();
-        RLP.RLPItem[] memory val1 = arr[1].toList();
+        RLP.RLPItem[] memory rlpInputs = item[0].toList();
+        RLP.RLPItem[] memory rlpOutputs = item[1].toList();
 
-        TransactionInput memory in1 = TransactionInput({
-            txID: val0[0].toBytes32(),
-            outputIndex: val0[1].toUint()
-        });
-        TransactionInput memory in2 = TransactionInput({
-            txID: val1[0].toBytes32(),
-            outputIndex: val1[1].toUint()
-        });
+        TransactionInput[] memory inputs = new TransactionInput[](rlpInputs.length);
+        for (uint i = 0; i < rlpInputs.length; ++i) {
+            RLP.RLPItem[] memory values = rlpInputs[i].toList();
+            inputs[i] = TransactionInput({
+                txID: values[0].toBytes32(),
+                outputIndex: values[1].toUint(),
+                v: uint8(values[2].toUint()),
+                r: values[3].toBytes32(),
+                s: values[4].toBytes32()
+            });
+        }
 
-        arr = item[1].toList();
-        val0 = arr[0].toList();
-        val1 = arr[1].toList();
-
-        TransactionOutput memory out1 = TransactionOutput({
-            recipient: val0[0].toAddress(),
-            amount: val0[1].toUint()});
-        TransactionOutput memory out2 = TransactionOutput({
-            recipient: val1[0].toAddress(),
-            amount: val1[1].toUint()});
-
-        TransactionInput[2] memory inputs;
-        inputs[0] = in1;
-        inputs[1] = in2;
-
-        TransactionOutput[2] memory outputs;
-        outputs[0] = out1;
-        outputs[1] = out2;
+        TransactionOutput[] memory outputs = new TransactionOutput[](rlpOutputs.length);
+        for (i = 0; i < rlpOutputs.length; ++i) {
+            values = rlpOutputs[i].toList();
+            outputs[i] = TransactionOutput({
+                recipient: values[0].toAddress(),
+                amount: values[1].toUint()
+            });
+        }
 
         Transaction memory tx = Transaction({
             inputs: inputs,
@@ -265,17 +275,32 @@ contract Plasma is Ownable {
         return hashTransaction(transaction) == _txHash;
     }
 
-    function toBytes(uint256 x) returns (bytes b) {
+    function toBytes(uint256 x) constant returns (bytes b) {
         b = new bytes(32);
         assembly { mstore(add(b, 32), x) }
     }
 
-    function toBytes(bytes32 x) returns (bytes b) {
+    function toBytes(bytes32 x) constant returns (bytes b) {
         b = new bytes(32);
         assembly { mstore(add(b, 32), x) }
     }
 
-    function mergeBytes(bytes left, bytes right) returns (bytes b) {
+    function uint8_toBytes(uint8 x) constant returns (bytes b) {
+        bytes memory res = toBytes(uint256(x));
+        b = new bytes(1);
+        b[0] = res[31];
+    }
+
+    function toBytes(address a) constant returns (bytes b){
+        assembly {
+            let m := mload(0x40)
+            mstore(add(m, 20), xor(0x140000000000000000000000000000000000000000, a))
+            mstore(0x40, add(m, 52))
+            b := m
+        }
+    }
+
+    function mergeBytes(bytes left, bytes right) constant returns (bytes b) {
         b = new bytes(left.length + right.length);
         for (uint256 i = 0; i < left.length; ++i) {
             b[i] = left[i];

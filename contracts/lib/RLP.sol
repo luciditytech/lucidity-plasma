@@ -9,7 +9,6 @@ pragma solidity 0.4.19;
 * @author Andreas Olofsson (androlo1980@gmail.com)
 */
 library RLP {
-
     uint constant DATA_SHORT_START = 0x80;
     uint constant DATA_LONG_START = 0xB8;
     uint constant LIST_SHORT_START = 0xC0;

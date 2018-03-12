@@ -1,185 +1,166 @@
 const web3Utils = require('web3-utils');
-const ethjsUtil = require('ethereumjs-util')
+const ethjsUtil = require('ethereumjs-util');
+
+const Signature = require('./Signature');
 
 const RLP = require('rlp');
 
-class Signature {
-    constructor(v, r, s) {
-        Object.defineProperty(this, 'v', {
-            value: v,
-            writable: false
-        });
-        Object.defineProperty(this, 'r', {
-            value: r,//toPaddedHexString(r, 32),
-            writable: false
-        });
-        Object.defineProperty(this, 's', {
-            value: s,//toPaddedHexString(s, 32),
-            writable: false
-        });
-    }
-
-    static none() {
-        return new Signature("0x0", "0x0", "0x0");
-    }
-
-    static fromHex(hex) {
-        let vrs = ethjsUtil.fromRpcSig(hex);
-        return new Signature(vrs.v, "0x" + vrs.r.toString('hex'), "0x" + vrs.s.toString('hex'));
-    }
-}
-
 class TransactionInput {
-    constructor(txID, outputIndex) {
-        Object.defineProperty(this, 'txID', {
-            value: toPaddedHexString(txID, 32),
-            writable: false
-        });
-        Object.defineProperty(this, 'outputIndex', {
-            value: outputIndex,
-            writable: false
-        });
-    }
+  constructor(txID, outputIndex, signature) {
+    Object.defineProperty(this, 'txID', {
+      value: toPaddedHexString(txID, 32),
+    });
+    Object.defineProperty(this, 'outputIndex', {
+      value: outputIndex,
+    });
+    Object.defineProperty(this, 'signature', {
+      value: signature,
+    });
+  }
 
-    typeVals() {
-        return [{
-            type: 'bytes32',
-            value: this.txID
-        }, {
-            type: 'uint',
-            value: this.outputIndex
-        }];
-    }
+  typeVals(includeSignatures) {
+    return [{
+      type: 'bytes32',
+      value: this.txID,
+    }, {
+      type: 'uint',
+      value: this.outputIndex,
+    },
+    ].concat(includeSignatures ? [{
+      type: 'uint8',
+      value: this.signature.v,
+    }, {
+      type: 'bytes32',
+      value: this.signature.r,
+    }, {
+      type: 'bytes32',
+      value: this.signature.s,
+    },
+    ] : []);
+  }
 
-    static none() {
-        return new TransactionInput("0x0", 0x0);
-    }
+  static none() {
+    return new TransactionInput('0x0', 0x0);
+  }
 
-    equals(obj) {
-        return JSON.stringify(this.typeVals()) === JSON.stringify(obj.typeVals());
-    }
+  equals(obj) {
+    return JSON.stringify(this.typeVals(true)) === JSON.stringify(obj.typeVals(true));
+  }
 }
-
 
 class TransactionOutput {
-    constructor(address, amount) {
-        Object.defineProperty(this, 'address', {
-            value: toPaddedHexString(address, 20),
-            writable: false
-        });
-        Object.defineProperty(this, 'amount', {
-            value: amount,
-            writable: false
-        });
-    }
+  constructor(address, amount) {
+    Object.defineProperty(this, 'address', {
+      value: toPaddedHexString(address, 20),
+    });
+    Object.defineProperty(this, 'amount', {
+      value: amount,
+    });
+  }
 
-    typeVals() {
-        return [{
-            type: 'address',
-            value: this.address
-        }, {
-            type: 'uint',
-            value: this.amount
-        }];
-    }
+  typeVals() {
+    return [{
+      type: 'address',
+      value: this.address,
+    }, {
+      type: 'uint',
+      value: this.amount,
+    },
+    ];
+  }
 
-    equals(obj) {
-        return JSON.stringify(this.typeVals()) === JSON.stringify(obj.typeVals());
-    }
+  equals(obj) {
+    return JSON.stringify(this.typeVals()) === JSON.stringify(obj.typeVals());
+  }
 
-    static none() {
-        return new TransactionOutput("0x0", 0x0);
-    }
+  static none() {
+    return new TransactionOutput('0x0', 0x0);
+  }
 }
 
 class Transaction {
-    constructor(inputs, outputs, payload) {
-        if (inputs.length !== 2) throw "Must be 2 inputs";
-        if (outputs.length !== 2) throw "Must be 2 outputs";
+  constructor(inputs, outputs, payload) {
+    if ((inputs.length + outputs.length) === 0) throw 'Must be an input or an output';
 
-        Object.defineProperty(this, 'inputs', {
-            value: inputs,
-            writable: false
-        });
-        Object.defineProperty(this, 'outputs', {
-            value: outputs,
-            writable: false
-        });
-        Object.defineProperty(this, 'payload', {
-            value: payload || 0x0,
-            writable: false
-        });
-    }
+    Object.defineProperty(this, 'inputs', {
+      value: inputs,
+    });
+    Object.defineProperty(this, 'outputs', {
+      value: outputs,
+    });
+    Object.defineProperty(this, 'payload', {
+      value: payload || 0x0,
+    });
+  }
 
-    static depositTransaction(address, amount, headerIndex) {
-        const payeeOutput = new TransactionOutput(address, amount);
+  static depositTransaction(address, amount, headerIndex) {
+    const payeeOutput = new TransactionOutput(address, amount);
+    return new Transaction([], [payeeOutput], headerIndex);
+  }
 
-        return new Transaction([TransactionInput.none(), TransactionInput.none()], [payeeOutput, TransactionOutput.none()], headerIndex);
-    }
+  toRLP() {
+    const resInputs = this.inputs.map((input) => [input.txID, input.outputIndex,
+      input.signature.v, input.signature.r, input.signature.s,
+    ]);
+    const resOutputs = this.outputs.map((output) => [output.address, output.amount]);
+    return RLP.encode([resInputs, resOutputs, this.payload]);
+  }
 
-    toRLP() {
-        const res = [[], [], this.payload];
-        this.inputs.forEach((input) => {
-            res[0].push([input.txID, input.outputIndex]);
-        });
-        this.outputs.forEach((output) => {
-            res[1].push([output.address, output.amount]);
-        });
-        return RLP.encode(res);
-    }
+  toRLPHex() {
+    return `0x${this.toRLP().toString('hex')}`;
+  }
 
-    toRLPHex() {
-        return '0x' + this.toRLP().toString('hex');
-    }
+  hash() {
+    return Buffer.from(web3Utils.soliditySha3.apply(null, this.typeVals()).substring(2), 'hex');
+  }
 
-    hash() {
-        return Buffer.from(web3Utils.soliditySha3.apply(null, this.typeVals()).substring(2), 'hex');
-    }
+  hashHex() {
+    return `0x${this.hash().toString('hex')}`;
+  }
 
-    hashHex() {
-        return '0x' + this.hash().toString('hex')
-    }
+  tid() {
+    return Buffer.from(web3Utils.soliditySha3.apply(null, this.typeVals(true)).substring(2), 'hex');
+  }
 
-    typeVals() {
-        let res = [];
-        this.inputs.forEach(input => res = res.concat(input.typeVals()));
-        this.outputs.forEach(output => res = res.concat(output.typeVals()));
-        res.push({
-            type: 'uint',
-            value: this.payload
-        });
-        return res;
-    }
+  tidHex() {
+    return `0x${this.tid().toString('hex')}`;
+  }
 
-    isDeposit() {
-        return this.inputs.length === 2
-            && this.outputs.length === 2
-            && this.inputs[0].equals(TransactionInput.none())
-            && this.inputs[1].equals(TransactionInput.none())
-            && this.outputs[0].amount > 0
-            && this.outputs[1].equals(TransactionOutput.none());
-    }
+  typeVals(includeSignatures) {
+    const resInputs = this.inputs.map(input => input.typeVals(includeSignatures));
+    const resOutputs = this.outputs.map(output => output.typeVals());
+    return [
+      ...[].concat.apply([], resInputs),
+      ...[].concat.apply([], resOutputs),
+      { type: 'uint', value: this.payload },
+    ];
+  }
 
-    verify(signature, address) {
-        signature = signature || this.signature;
+  isDeposit() {
+    return this.inputs.length === 0
+      && this.outputs.length === 1
+      && this.outputs[0].amount > 0;
+  }
 
-        const pubKey = ethjsUtil.ecrecover(new Buffer(this.hashHex().substring(2), 'hex'),
-            signature.v,
-            new Buffer(signature.r.substring(2), 'hex'),
-            new Buffer(signature.s.substring(2), 'hex'));
+  verify(signature, address) {
+    signature = signature || this.signature;
 
-        return address === ethjsUtil.bufferToHex(ethjsUtil.pubToAddress(pubKey));
-    }
+    const pubKey = ethjsUtil.ecrecover(new Buffer(this.hashHex().substring(2), 'hex'),
+      signature.v,
+      new Buffer(signature.r.substring(2), 'hex'),
+      new Buffer(signature.s.substring(2), 'hex'));
+
+    return address === ethjsUtil.bufferToHex(ethjsUtil.pubToAddress(pubKey));
+  }
 }
 
 function toPaddedHexString(num, len) {
-    num = num.substring(2);
-    return '0x' + "0".repeat(len * 2 - num.length) + num;
+  num = num.substring(2);
+  return `0x${'0'.repeat(len * 2 - num.length) + num}`;
 }
 
 module.exports = {
-    Transaction: Transaction,
-    TransactionOutput: TransactionOutput,
-    TransactionInput: TransactionInput,
-    Signature: Signature
+  Transaction: Transaction,
+  TransactionOutput: TransactionOutput,
+  TransactionInput: TransactionInput,
 };

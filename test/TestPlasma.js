@@ -241,8 +241,15 @@ contract('Plasma', async ([owner]) => {
     // withdraw part
     const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
 
-    const event1 = (await plasma.withdraw(headers.length - 2, spendTransaction1.toRLPHex(), merkleTree.getHexProof(spendTransaction1.tid()), 0,
-      headers.length - 1, exitTransaction1.toRLPHex(), exitMerkleTree.getHexProof(exitTransaction1.tid()))).logs.find(x => x.event === 'WithdrawEvent');
+    const event1 = (await plasma
+      .withdraw(headers.length - 2,
+        spendTransaction1.toRLPHex(),
+        merkleTree.getHexProof(spendTransaction1.tid()),
+        0,
+        headers.length - 1,
+        exitTransaction1.toRLPHex(),
+        exitMerkleTree.getHexProof(exitTransaction1.tid())))
+      .logs.find(log => log.event === 'WithdrawEvent');
 
     assert.equal(event1.args._to, privToAddr(spendPriv));
     assert.equal(event1.args._amount, 1000);

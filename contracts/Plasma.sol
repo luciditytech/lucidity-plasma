@@ -140,8 +140,8 @@ contract Plasma is Ownable {
         bytes _transactionBytes, bytes _proof,
         uint outputIndex,
         uint _exitHeaderNumber,
-        bytes _exitTransactionBytes, bytes _exitProof) public returns (bool success) {
-
+        bytes _exitTransactionBytes, bytes _exitProof
+    ) public returns (bool success) {
         // check if exitTx exists
         Header storage header = headers[_exitHeaderNumber];
         Transaction memory exitTransaction = decodeTransaction(_exitTransactionBytes);

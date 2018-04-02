@@ -61,7 +61,6 @@ contract Plasma is Ownable {
     }
 
     function submitBlockHeader(Header memory header) private returns (bool success) {
-
         headers[headersCount] = header;
 
         bytes32 newHeaderHash = hashHeader(header);
@@ -112,7 +111,7 @@ contract Plasma is Ownable {
             inputs: inputs,
             outputs: outputs,
             payload: headersCount
-        });
+            });
 
         bytes32 txID = hashTransaction(tx);
 
@@ -121,7 +120,7 @@ contract Plasma is Ownable {
             prev: 0x0,
             merkleRootHash: txID,
             createdAt: block.timestamp
-        });
+            });
 
         if (headersCount != 0) {
             Header storage previousHeader = headers[headersCount - 1];
@@ -135,40 +134,57 @@ contract Plasma is Ownable {
 
     event DepositEvent(address indexed _from, uint indexed _amount, uint indexed _headerNumber);
 
-    mapping(bytes32 => mapping(uint => bool)) public withdrawTXs;
+    mapping(bytes32 => bool) public withdrawTXs;
 
     function withdraw(uint _headerNumber,
         bytes _transactionBytes, bytes _proof,
         uint outputIndex,
-        uint8 _v, bytes32 _r, bytes32 _s) public returns (bool success) {
-        assert(_headerNumber < headersCount);
-        Header storage header = headers[_headerNumber];
+        uint _exitHeaderNumber,
+        bytes _exitTransactionBytes, bytes _exitProof) public returns (bool success) {
 
-        // check if the transaction exists
+        // check if exitTx exists
+        Header storage header = headers[_exitHeaderNumber];
+        Transaction memory exitTransaction = decodeTransaction(_exitTransactionBytes);
+        bytes32 exitTxID = tid(exitTransaction);
+        bytes32 exitTxHash = hashTransaction(exitTransaction);
+
+        require(MerkleProof.verifyProof(_exitProof, header.merkleRootHash, exitTxID));
+
+        // check if exitTx is still unspent
+        require(!withdrawTXs[exitTxID]);
+
+        // check if tx exists
+        header = headers[_headerNumber];
         Transaction memory transaction = decodeTransaction(_transactionBytes);
-        bytes32 hash = hashTransaction(transaction);
         bytes32 txID = tid(transaction);
-
-        assert(!withdrawTXs[txID][outputIndex]);
 
         require(MerkleProof.verifyProof(_proof, header.merkleRootHash, txID));
 
-        assert(transaction.outputs.length == 1);
-        address addr = transaction.outputs[0].recipient;
+        // check if exitTx input corresponds to tx output
+        require(exitTransaction.inputs.length == 1);
+        require(exitTransaction.inputs[0].txID == txID);
+        require(exitTransaction.inputs[0].outputIndex == outputIndex);
 
-        require(ecrecover(txID, _v, _r, _s) == addr);
+        // check if exitTx output destroys the right amount of coins
+        require(exitTransaction.outputs.length == 1);
+        require(exitTransaction.outputs[0].recipient == address(0x0));
+        require(exitTransaction.outputs[0].amount <= transaction.outputs[outputIndex].amount);
 
-        uint amount = transaction.outputs[0].amount;
-        assert(amount > 0);
+        // check the signature (must be valid if operators don't counterfeit blocks)
+        require(ecrecover(exitTxHash, exitTransaction.inputs[0].v, exitTransaction.inputs[0].r, exitTransaction.inputs[0].s)
+        == transaction.outputs[outputIndex].recipient);
 
-        addr.transfer(amount);
+        transaction.outputs[outputIndex].recipient.transfer(exitTransaction.outputs[0].amount);
 
-        WithdrawEvent(addr, amount, txID);
+        // mark exitTx to enforce a single withdrawal
+        withdrawTXs[exitTxID] = true;
+
+        WithdrawEvent(transaction.outputs[outputIndex].recipient, exitTransaction.outputs[0].amount, exitTxID);
 
         return true;
     }
 
-    event WithdrawEvent(address indexed _to, uint indexed _amount, bytes32 indexed _txID);
+    event WithdrawEvent(address indexed _to, uint indexed _amount, bytes32 indexed _exitTxID);
 
     function hashTransaction(Transaction memory _transaction) internal returns (bytes32) {
         bytes memory res;
@@ -224,7 +240,7 @@ contract Plasma is Ownable {
             prev: item[1].toBytes32(),
             merkleRootHash: item[2].toBytes32(),
             createdAt: item[3].toUint()
-        });
+            });
 
         return header;
     }
@@ -244,7 +260,7 @@ contract Plasma is Ownable {
                 v: uint8(values[2].toUint()),
                 r: values[3].toBytes32(),
                 s: values[4].toBytes32()
-            });
+                });
         }
 
         TransactionOutput[] memory outputs = new TransactionOutput[](rlpOutputs.length);
@@ -253,14 +269,14 @@ contract Plasma is Ownable {
             outputs[i] = TransactionOutput({
                 recipient: values[0].toAddress(),
                 amount: values[1].toUint()
-            });
+                });
         }
 
         Transaction memory tx = Transaction({
             inputs: inputs,
             outputs: outputs,
             payload: item[2].toUint()
-        });
+            });
 
         return tx;
     }

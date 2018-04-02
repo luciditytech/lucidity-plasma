@@ -184,7 +184,7 @@ contract('Plasma', async ([owner]) => {
     spendPriv = privGen();
     const payeeOutput1 = new TransactionOutput(privToAddr(spendPriv), 1000);
     const tx1 = spendTransaction1 = txWithSignatures(
-      [new TransactionInput(depositTransaction1.hashHex(), 0)], [payeeOutput1], [depositPriv]);
+      [new TransactionInput(depositTransaction1.tidHex(), 0)], [payeeOutput1], [depositPriv]);
 
     const signature1 = tx1.inputs[0].signature;
 
@@ -192,9 +192,9 @@ contract('Plasma', async ([owner]) => {
     assert.isTrue(await plasma.validate(tx1.hashHex(), privToAddr(depositPriv),
         signature1.v, signature1.r, signature1.s));
 
-    const payeeOutput2 = new TransactionOutput(privToAddr(spendPriv), 1500);
+    const payeeOutput2 = new TransactionOutput(privToAddr(spendPriv), 500);
     const tx2 = spendTransaction2 = txWithSignatures(
-      [new TransactionInput(depositTransaction2.hashHex(), 0)], [payeeOutput2], [depositPriv]);
+      [new TransactionInput(depositTransaction2.tidHex(), 0)], [payeeOutput2], [depositPriv]);
 
     const signature2 = sign(tx2.hashHex(), depositPriv);
 
@@ -219,22 +219,46 @@ contract('Plasma', async ([owner]) => {
   });
 
   it('withdraw', async function () {
+    // create exit transactions
+    const exitOutput1 = new TransactionOutput('0x0', 1000);
+    const exitTransaction1 = txWithSignatures(
+      [new TransactionInput(spendTransaction1.tidHex(), 0)], [exitOutput1], [spendPriv]);
+
+    const exitOutput2 = new TransactionOutput('0x0', 500);
+    const exitTransaction2 = txWithSignatures(
+      [new TransactionInput(spendTransaction2.tidHex(), 0)], [exitOutput2], [spendPriv]);
+
+    const exitMerkleTree = new MerkleTree([exitTransaction1.tid(), exitTransaction2.tid()]);
+
+    const prevHash = headers[headers.length - 1].hashHex();
+
+    const exitHeader = new Header(0, prevHash, exitMerkleTree.getHexRoot());
+
+    await plasma.submitBlockHeader(headers.length, exitHeader.toRLPHex());
+
+    headers.push(exitHeader);
+
+    // withdraw part
     const merkleTree = new MerkleTree([spendTransaction1.tid(), spendTransaction2.tid()]);
 
-    const proof = merkleTree.getHexProof(spendTransaction1.tid());
+    const event1 = (await plasma.withdraw(headers.length - 2, spendTransaction1.toRLPHex(), merkleTree.getHexProof(spendTransaction1.tid()), 0,
+      headers.length - 1, exitTransaction1.toRLPHex(), exitMerkleTree.getHexProof(exitTransaction1.tid()))).logs.find(x => x.event === 'WithdrawEvent');
 
-    const signature = sign(spendTransaction1.tidHex(), spendPriv);
+    assert.equal(event1.args._to, privToAddr(spendPriv));
+    assert.equal(event1.args._amount, 1000);
+    assert.equal(event1.args._exitTxID, exitTransaction1.tidHex());
 
-    const event = (await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
-        signature.v, signature.r, signature.s)).logs.find(x => x.event === 'WithdrawEvent');
+    const event2 = (await plasma.withdraw(headers.length - 2, spendTransaction2.toRLPHex(), merkleTree.getHexProof(spendTransaction2.tid()), 0,
+      headers.length - 1, exitTransaction2.toRLPHex(), exitMerkleTree.getHexProof(exitTransaction2.tid()))).logs.find(x => x.event === 'WithdrawEvent');
 
-    assert.equal(event.args._to, privToAddr(spendPriv));
-    assert.equal(event.args._amount, 1000);
-    assert.equal(event.args._txID, spendTransaction1.tidHex());
+    assert.equal(event2.args._to, privToAddr(spendPriv));
+    assert.equal(event2.args._amount, 500);
+    assert.equal(event2.args._exitTxID, exitTransaction2.tidHex());
 
+    // double-spend
     try {
-      await plasma.withdraw(headers.length - 1, spendTransaction1.toRLPHex(), proof, 0,
-            signature.v, signature.r, signature.s);
+      await plasma.withdraw(headers.length - 2, spendTransaction1.toRLPHex(), merkleTree.getHexProof(spendTransaction1.tid()), 0,
+        headers.length - 1, exitTransaction1.toRLPHex(), exitMerkleTree.getHexProof(exitTransaction1.tid()));
     } catch (err) {
       assert.isTrue(err.message.includes('VM Exception'));
     }

@@ -8,6 +8,7 @@ Implements a Solidity contract to manage Plasma side-chain on Ethereum.
 $ npm install
 ```
 
+
 ## Run test cases:
 
 ```
@@ -17,10 +18,16 @@ $ ./ganache-cli
 $ truffle test
 ```
 
+## Details
+
+The implementation is based on UTXO model. It allows depositing, submitting blocks and withdrawing.
+The current implementation is not designed to withstand double-spends caused by fraudulent operators.
+Operators are selected by the contract creator. PoS consensus mechanism is coming in the future.
+
 ## TODO
 
 - Implement a way to challenge withdrawals;
-- Implement consensus between operators;
+- Implement a consensus layer;
 - Optimize the code in order to spend less gas;
 - Implement a better serialization mechanism.
 

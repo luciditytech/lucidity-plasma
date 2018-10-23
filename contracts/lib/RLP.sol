@@ -306,13 +306,10 @@ library RLP {
     view
     returns (address data)
     {
-        require(isData(self));
-        var (rStartPos, len) = _decode(self);
-        if (len != 20)
+        var (, len) = _decode(self);
+        if (len > 20)
             throw;
-        assembly {
-            data := div(mload(rStartPos), exp(256, 12))
-        }
+        return address(toUint(self));
     }
 
     // Get the payload offset.
